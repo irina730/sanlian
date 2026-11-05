@@ -2,7 +2,7 @@
    type: weight=负重  assist=辅助（数字越小越强）  body=自重  time=按时间
    met: 用于热量估算的代谢当量（参考 Compendium of Physical Activities） */
 const DAYS = {
-  d1: { label: 'Day 1', title: '背 + 手臂', focus: '大手臂后侧 · 背部线条 · 全程沉肩' },
+  d1: { label: 'Day 1', title: '背 + 手臂 + 腿', focus: '背部线条 · 大手臂后侧 · 大腿内外侧' },
   d2: { label: 'Day 2', title: '臀 + 核心', focus: '臀腿发力 · 下腹线条' },
   d3: { label: 'Day 3', title: '全身', focus: '全身巩固 · 下腹和侧腰' },
 };
@@ -15,10 +15,10 @@ const GOALS = {
 };
 
 const EX = {
-  'lat-pulldown': { name: '高位下拉', type: 'weight', goal: 'back', met: 5, step: 5,
+  'lat-pulldown': { name: '高位下拉', note: '先沉肩，拉到锁骨', type: 'weight', goal: 'back', met: 5, step: 5,
     setup: '坐稳，大腿压在护垫下，双手比肩宽握杠', action: '先沉肩，再把杠往下拉到锁骨，手肘往下往后夹', tip: '不要耸肩，不要身体大幅后仰',
     trap: '先沉肩再拉，全程肩膀远离耳朵' },
-  'seated-row': { name: '坐姿划船', type: 'weight', goal: 'back', met: 5, step: 5,
+  'seated-row': { name: '坐姿划船', note: '手肘贴身体', type: 'weight', goal: 'back', met: 5, step: 5,
     setup: '坐直挺胸，膝盖微弯，双手握把', action: '把手柄拉到肚脐位置，手肘贴着身体往后，夹紧背', tip: '身体不要前后晃，肩膀放松往下',
     trap: '拉到底时肩膀往下沉，不要往上提' },
   'db-row': { name: '单臂哑铃划船', type: 'weight', perSide: true, goal: 'back', met: 5, step: 5,
@@ -33,12 +33,19 @@ const EX = {
   'db-curl': { name: '哑铃弯举', type: 'weight', goal: 'arm', met: 3.5, step: 5,
     setup: '站直，双手拿哑铃，手心朝前', action: '手肘不动，把哑铃弯举到肩前，慢慢放下', tip: '不要借身体晃动的力' },
 
-  'hip-thrust': { name: '杠铃臀推 / 臀桥', type: 'weight', goal: 'glute', met: 6, step: 10,
+  'hip-thrust': { name: '杠铃臀推', alt: 'glute-bridge', type: 'weight', goal: 'glute', met: 6, step: 10,
     setup: '上背靠凳子，双脚踩地，杠铃放髋部（垫护垫）', action: '臀部发力把髋推高，身体呈一条直线，顶端夹臀1秒', tip: '小腿垂直地面，下巴微收，别塌腰' },
   'rdl': { name: '罗马尼亚硬拉', type: 'weight', goal: 'glute', met: 6, step: 10,
     setup: '站直拿杠铃或哑铃，膝盖微弯并保持不动', action: '屁股往后推，上身前倾，杠贴腿往下到小腿中间，再起身', tip: '背一直挺直，感觉大腿后侧被拉伸' },
-  'hip-abduction': { name: '器械髋外展', type: 'weight', goal: 'glute', met: 3.5, step: 10,
+  'hip-abduction': { name: '器械髋外展（往外）', type: 'weight', goal: 'glute', met: 3.5, step: 10,
     setup: '坐在外展机上，护垫放在膝盖外侧', action: '膝盖往外推开，停1秒，慢合回', tip: '上身可以微微前倾，更练臀' },
+  'hip-adduction': { name: '器械髋内收（往内）', type: 'weight', goal: 'glute', met: 3.5, step: 10,
+    setup: '坐在内收机上，护垫放在膝盖内侧', action: '大腿往内夹紧，停1秒，慢慢打开', tip: '动作慢一点，别让重量砸回去' },
+  'face-pull': { name: '绳索面拉', note: '改善驼背，拉向额头，手肘高过肩', type: 'weight', goal: 'back', met: 3.5, step: 5,
+    setup: '绳索调到比头高，双手握绳，后退一步站稳', action: '把绳往额头方向拉，手肘高过肩，向两侧打开', tip: '用后背和后肩发力，身体不要后仰',
+    trap: '肩膀先下沉再拉，脖子不要缩' },
+  'glute-bridge': { name: '臀桥', alt: 'hip-thrust', type: 'body', goal: 'glute', met: 3.8, step: 5,
+    setup: '平躺，双脚踩地，双手放身体两侧', action: '臀部发力把髋顶起，身体呈一条直线，顶端夹臀1秒，慢慢放下', tip: '不加重量也可以，别塌腰' },
   'cable-kickback': { name: '绳索后踢腿', type: 'weight', perSide: true, goal: 'glute', met: 4, step: 5,
     setup: '绳索绑在脚踝，双手扶住机器，上身微前倾', action: '腿伸直往后上方踢，用屁股发力', tip: '腰不要跟着拱起，动作慢一点' },
   'reverse-crunch': { name: '反向卷腹', type: 'body', goal: 'core', met: 3.8, step: 5,
@@ -66,13 +73,14 @@ const EX = {
 
 const PLAN = {
   d1: [
-    { ex: 'lat-pulldown', sets: 4, low: 10, high: 12 },
-    { ex: 'seated-row', sets: 3, low: 12, high: 12 },
-    { ex: 'db-row', sets: 3, low: 10, high: 10 },
-    { ex: 'straight-arm-pulldown', sets: 3, low: 12, high: 12 },
-    { ex: 'triceps-pushdown', sets: 3, low: 12, high: 12 },
-    { ex: 'overhead-extension', sets: 3, low: 12, high: 12 },
-    { ex: 'db-curl', sets: 2, low: 12, high: 12 },
+    { ex: 'lat-pulldown', sets: 4, low: 10, high: 12, lb: 45 },
+    { ex: 'seated-row', sets: 3, low: 12, high: 12, lb: 25 },
+    { ex: 'db-row', sets: 3, low: 10, high: 10, lb: 10 },
+    { ex: 'straight-arm-pulldown', sets: 3, low: 12, high: 12, lb: 10 },
+    { ex: 'triceps-pushdown', sets: 3, low: 12, high: 12, lb: 10 },
+    { ex: 'face-pull', sets: 3, low: 15, high: 15, lb: 10 },
+    { ex: 'hip-abduction', sets: 3, low: 15, high: 15, lb: 85 },
+    { ex: 'hip-adduction', sets: 3, low: 15, high: 15, lb: 80 },
   ],
   d2: [
     { ex: 'hip-thrust', sets: 4, low: 10, high: 12 },

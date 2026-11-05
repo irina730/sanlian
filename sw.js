@@ -1,6 +1,6 @@
 // 离线缓存：改了文件想让手机更新，把版本号 +1 即可
-const VERSION = 'sanlian-v1';
-const IMAGES = ['lat-pulldown','seated-row','db-row','straight-arm-pulldown','triceps-pushdown','overhead-extension','db-curl','hip-thrust','rdl','hip-abduction','cable-kickback','reverse-crunch','dead-bug','plank','assist-pullup','reverse-fly','knee-pushup','single-leg-bridge','leg-raise','side-plank'];
+const VERSION = 'sanlian-v2';
+const IMAGES = ['lat-pulldown','seated-row','db-row','straight-arm-pulldown','triceps-pushdown','overhead-extension','db-curl','hip-thrust','rdl','hip-abduction','cable-kickback','reverse-crunch','dead-bug','plank','assist-pullup','reverse-fly','knee-pushup','single-leg-bridge','leg-raise','side-plank','hip-adduction','face-pull','glute-bridge'];
 const FILES = ['./', 'index.html', 'style.css', 'data.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...IMAGES.map(n => `img/${n}.webp`)];
 
 self.addEventListener('install', e => {

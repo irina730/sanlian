@@ -19,7 +19,7 @@ const ICON = {
 /* ---------- 状态 ---------- */
 const clone = o => JSON.parse(JSON.stringify(o));
 function defaults() {
-  return { v: 1, settings: { weightLb: 130, restSec: 75, sound: true, onboarded: false, lastBackup: null, hideInstall: false },
+  return { v: 2, settings: { weightLb: 130, restSec: 75, sound: true, soundMode: 'loud', sysTimer: false, onboarded: false, lastBackup: null, hideInstall: false },
     plan: clone(PLAN), customEx: {}, sessions: [], active: null, body: [] };
 }
 function load() {
@@ -27,7 +27,10 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaults();
     const d = defaults(), o = JSON.parse(raw);
-    return { ...d, ...o, settings: { ...d.settings, ...o.settings } };
+    const out = { ...d, ...o, settings: { ...d.settings, ...o.settings } };
+    if ((o.v || 1) < 2) out.plan = { ...out.plan, d1: clone(PLAN.d1) }; // 第 2 版：Day 1 换成新的标准训练
+    out.v = 2;
+    return out;
   } catch (e) { return defaults(); }
 }
 let S = load();
@@ -165,10 +168,10 @@ function findPRs(s) {
 
 /* ---------- 新建训练 ---------- */
 function buildExercise(it, sessionId) {
-  const last = lastFor(it.ex, sessionId), sets = [];
+  const ex = getEx(it.ex), last = lastFor(it.ex, sessionId), sets = [], hasStd = it.lb !== undefined && it.lb !== '';
   for (let j = 0; j < it.sets; j++) {
     const p = last ? (last.sets[j] || last.sets[last.sets.length - 1]) : null;
-    sets.push({ lb: p && num(p.lb) ? num(p.lb) : '', reps: '', sec: p ? (num(p.sec) || '') : '', done: false });
+    sets.push({ lb: hasStd ? it.lb : (p && num(p.lb) ? num(p.lb) : ''), reps: ex.type === 'time' ? '' : it.high, sec: ex.type === 'time' ? ((p && num(p.sec)) || it.low) : '', done: false });
   }
   return { ex: it.ex, low: it.low, high: it.high, target: it.sets, sets };
 }
@@ -182,19 +185,52 @@ function startSession(day, date, manual) {
 }
 
 /* ---------- 声音 / 常亮 ---------- */
-let ac = null, wake = null;
+let ac = null, wake = null, bell = null, bellReady = false;
+function applyAudioSession() {
+  try { if (navigator.audioSession) navigator.audioSession.type = S.settings.soundMode === 'mix' ? 'ambient' : 'auto'; } catch (e) {}
+}
+function makeBell() {
+  // 生成一段三连响的提示音。用 <audio> 播放，iPhone 上比 Web Audio 更可靠
+  const sr = 22050, parts = [[.18, 1], [.09, 0], [.18, 1], [.09, 0], [.28, 1]], n = Math.floor(parts.reduce((a, p) => a + p[0], 0) * sr);
+  const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+  let i = 0;
+  parts.forEach(([d, on]) => { const m = Math.floor(d * sr); for (let k = 0; k < m && i < n; k++, i++) { const env = Math.min(1, k / 200, (m - k) / 400); v.setInt16(44 + i * 2, on ? Math.sin(2 * Math.PI * 1046 * k / sr) * env * 30000 : 0, true); } });
+  const a = new Audio(URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
+  a.preload = 'auto'; a.setAttribute('playsinline', '');
+  return a;
+}
 function unlockAudio() {
-  try { if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === 'suspended') ac.resume(); } catch (e) {}
+  try { if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)(); if (ac.state !== 'running') ac.resume(); } catch (e) {}
+  try {
+    if (!bell) bell = makeBell();
+    if (!bellReady) {
+      applyAudioSession();
+      bell.muted = true;
+      const r = bell.play();
+      if (r) r.then(() => { bell.pause(); bell.currentTime = 0; bell.muted = false; bellReady = true; }).catch(() => { bell.muted = false; });
+    }
+  } catch (e) {}
+}
+function tick() {
+  if (!ac) return;
+  try {
+    if (ac.state !== 'running') ac.resume();
+    const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+    o.frequency.value = 880; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.4, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + .17);
+    o.connect(g).connect(ac.destination); o.start(t); o.stop(t + .18);
+  } catch (e) {}
 }
 function beep(times = 3) {
   if (navigator.vibrate) navigator.vibrate(times > 1 ? [180, 90, 180] : 120);
-  if (!S.settings.sound || !ac) return;
-  for (let i = 0; i < times; i++) {
-    const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime + i * .22;
-    o.frequency.value = 880; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.3, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + .17);
-    o.connect(g).connect(ac.destination); o.start(t); o.stop(t + .18);
-  }
+  if (!S.settings.sound) return;
+  if (times === 1) { tick(); return; }
+  if (bell) { bell.muted = false; bell.currentTime = 0; const r = bell.play(); if (r) r.catch(() => tick()); }
+  else tick();
 }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') bellReady = false; });
 async function keepAwake() { try { if ('wakeLock' in navigator && !wake && document.visibilityState === 'visible') { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); } } catch (e) {} }
 function releaseAwake() { try { wake && wake.release(); } catch (e) {} wake = null; }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ui.view === 'workout') keepAwake(); });
@@ -228,7 +264,7 @@ function viewToday() {
   </div>
   ${ios && !standalone && !S.settings.hideInstall ? `<div class="banner row"><div class="grow">用 Safari 点底部分享按钮，选“添加到主屏幕”，就能像 App 一样打开。</div><button class="link small" data-a="hideInstall">知道了</button></div>` : ''}
   ${needBackup ? `<div class="banner row"><div class="grow">已经记了 ${all.length} 次训练，备份一下更安心。</div><button class="link small" data-a="exportData">备份</button></div>` : ''}
-  ${act ? `<div class="card ${act.day}"><div class="muted small">训练进行中</div><div style="font-size:22px;font-weight:700;color:var(--c);margin:2px 0 12px">${DAYS[act.day].label} · ${DAYS[act.day].title}</div><button class="btn" data-a="resume">继续训练</button></div>` : `
+  ${act ? `<div class="card ${act.day}"><div class="muted small">训练进行中</div><div style="font-size:22px;font-weight:700;color:var(--c);margin:2px 0 12px">${DAYS[act.day].label} · ${DAYS[act.day].title}</div><button class="btn" data-a="resume" style="margin-bottom:8px">继续训练</button><div class="row"><button class="btn soft" data-a="switchAsk">换一练</button><button class="btn soft" data-a="discardAsk">放弃这次</button></div></div>` : `
   <section class="card hero ${day}">
     <div class="seg" role="tablist">${Object.keys(DAYS).map(k => `<button class="${k === day ? 'on' : ''}" data-a="pick" data-v="${k}">${DAYS[k].label}${k === nextDay() ? ' · 下一练' : ''}</button>`).join('')}</div>
     <h2>${D.title}</h2>
@@ -243,7 +279,7 @@ function viewToday() {
     <div class="row between"><b>本周 ${wk.length} / 3 练</b><span class="small muted">${wkKcal ? kcalText(wkKcal) + ' kcal' : '还没开始'}</span></div>
     ${weekStrip()}
   </section>
-  <div style="text-align:center"><button class="link small" style="--c:var(--ink2)" data-a="backfill">忘了记？补记一次过去的训练</button></div>`;
+  <button class="btn soft" data-a="backfill">补记一次过去的训练</button>`;
 }
 
 /* ---------- 训练页 ---------- */
@@ -276,7 +312,7 @@ function exCard(s, e, i) {
   return `<article class="card ex ${full && !open ? 'complete' : ''}" id="ex-${i}">
     <button class="head" data-a="openEx" data-i="${i}" aria-expanded="${open}">
       ${thumb(e.ex)}
-      <span class="grow"><h3>${esc(ex.name)}</h3><span class="target">${fmtTarget(it, ex)}</span></span>
+      <span class="grow"><h3>${esc(ex.name)}</h3><span class="target">${fmtTarget(it, ex)}</span>${ex.note ? `<span class="exnote">${esc(ex.note)}</span>` : ''}</span>
       <span class="count ${full ? 'full' : ''}">${doneN}/${e.sets.length}</span>
     </button>
     ${open ? `<div class="body">
@@ -288,6 +324,7 @@ function exCard(s, e, i) {
         <button data-a="toggleHow" data-i="${i}">${ui.how[i] ? '收起动作说明' : '看动作说明'}</button>
         <span>${e.sets.length > 1 ? `<button data-a="removeSet" data-i="${i}">减一组</button>&nbsp;&nbsp;&nbsp;` : ''}<button data-a="addSet" data-i="${i}">加一组</button></span>
       </div>
+      <div class="exline">${ex.alt ? `<button class="swap" data-a="swapEx" data-i="${i}">换成${esc(getEx(ex.alt).name)}</button>` : '<span></span>'}<button data-a="removeEx" data-i="${i}">今天不做</button></div>
       ${ui.how[i] ? `<div class="exhow">${img(e.ex) ? `<img src="${img(e.ex)}" alt="${esc(ex.name)}动作示意">` : ''}${howto(ex)}</div>` : ''}
     </div>` : ''}
   </article>`;
@@ -299,7 +336,7 @@ function viewWorkout() {
     <div class="row">
       <button class="iconbtn" data-a="leaveWorkout" aria-label="返回">${ICON.back}</button>
       <div class="grow">
-        <div class="title">${D.label} · ${D.title}</div>
+        ${s.done ? `<div class="title">${D.label} · ${D.title}</div>` : `<button class="titlebtn title" data-a="switchAsk" aria-label="换一练">${D.label} · ${D.title} ▾</button>`}
         <div class="live">${s.done ? '修改记录' : s.manual ? '补记 ' + short(s.date) : `<span id="elapsed">${mmss(sessionSec(s))}</span>`} · <span id="livekcal">${kcalText(c.kcal)}</span> kcal</div>
       </div>
       <button class="btn sm" data-a="finishAsk">${s.done ? '保存' : '完成'}</button>
@@ -318,7 +355,7 @@ const actions = {
   toggleHow(ds) { ui.how[ds.i] = !ui.how[ds.i]; render(); },
   addSet(ds) {
     const e = activeSession().exercises[ds.i], l = e.sets[e.sets.length - 1];
-    e.sets.push({ lb: l ? l.lb : '', reps: '', sec: l ? l.sec : '', done: false }); save(); render();
+    e.sets.push({ lb: l ? l.lb : '', reps: l ? l.reps : '', sec: l ? l.sec : '', done: false }); save(); render();
   },
   removeSet(ds) {
     const e = activeSession().exercises[ds.i];
@@ -326,6 +363,48 @@ const actions = {
     if (k < 0) k = e.sets.length - 1;
     e.sets.splice(k, 1); save(); render();
   },
+  removeEx(ds) {
+    const s = activeSession(), i = +ds.i, e = s.exercises[i], nm = getEx(e.ex).name;
+    const go = () => {
+      s.exercises.splice(i, 1); ui.how = {};
+      if (ui.open === i) ui.open = s.exercises.findIndex(x => x.sets.some(t => !t.done));
+      else if (ui.open > i) ui.open--;
+      save(); render(); toast(`这次不做${nm}，计划不受影响`);
+    };
+    if (e.sets.some(t => t.done)) confirmSheet(`去掉“${nm}”？这个动作已经填的组也会一起去掉。`, '去掉', go); else go();
+  },
+  swapEx(ds) {
+    const s = activeSession(), e = s.exercises[ds.i], alt = getEx(e.ex).alt, ax = getEx(alt), last = lastFor(alt, s.id);
+    const lb = ax.type === 'body' ? '' : ((last && num(last.sets[0].lb)) || '');
+    e.ex = alt; e.sets.forEach(t => { t.lb = lb; if (ax.type !== 'body' && lb === '') t.done = false; });
+    save(); render(); toast(`这次改成${ax.name}`);
+  },
+  switchAsk() {
+    const s = activeSession(), other = Object.keys(DAYS).filter(k => k !== s.day);
+    showSheet(`<div class="sheet-title">换一练</div><p class="muted small" style="margin:-6px 2px 12px">现在是 ${DAYS[s.day].label} · ${DAYS[s.day].title}。</p>
+      ${other.map(k => `<div class="${k}" style="margin-bottom:8px"><button class="btn" data-a="switchDay" data-v="${k}">换成 ${DAYS[k].label} · ${DAYS[k].title}</button></div>`).join('')}
+      <button class="btn danger" data-a="discardAsk">放弃这次训练</button>`);
+  },
+  switchDay(ds) {
+    const s = activeSession(), n = calc(s).sets;
+    const go = () => { s.day = ds.v; s.exercises = S.plan[ds.v].map(it => buildExercise(it, s.id)); ui.open = 0; ui.how = {}; ui.rest = null; save(); closeSheet(); drawRest(); render(); scrollTo(0, 0); toast(`已换成 ${DAYS[ds.v].label}`); };
+    if (n) confirmSheet(`换成 ${DAYS[ds.v].label}？已经打卡的 ${n} 组会清掉。`, '换', go); else go();
+  },
+  restSystem() {
+    location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent('三练休息');
+  },
+  sysTimerHelp() {
+    showSheet(`<div class="sheet-title">系统计时器（灵动岛）</div>
+      <p class="muted small" style="margin:-6px 2px 12px">设置一次就行。打开后，休息条上会多一个“系统”按钮，点一下就启动手机自带的计时器，切到别的 App 也会到点响铃。</p>
+      <div class="card small"><b>第一步：建一个快捷指令</b>
+        <p class="muted" style="margin-top:6px">1. 打开手机自带的“快捷指令”App，点右上角 +。<br>2. 点“添加操作”，搜索“计时器”，选“启动计时器”。<br>3. 把时间改成你的休息时长，比如 1 分钟。<br>4. 点顶部的名称，改成 <b>三练休息</b>（要一字不差），点“完成”。</p></div>
+      <div class="form"><div class="formrow"><span>第二步：打开联动</span><button class="link" data-a="toggleSysTimer">${S.settings.sysTimer ? '已打开' : '未打开'}</button></div></div>
+      <p class="tiny" style="margin:-6px 2px 12px">点“系统”后会跳到快捷指令 App，计时器启动后，再切回三练就行。</p>
+      <button class="btn soft" data-a="settings">返回设置</button>`);
+  },
+  toggleSysTimer() { S.settings.sysTimer = !S.settings.sysTimer; save(); actions.sysTimerHelp(); },
+  soundMode() { S.settings.soundMode = S.settings.soundMode === 'mix' ? 'loud' : 'mix'; applyAudioSession(); bellReady = false; save(); drawSettings(); },
+  testSound() { unlockAudio(); setTimeout(() => beep(3), 300); },
   applySuggest(ds) {
     const e = activeSession().exercises[ds.i];
     e.sets.forEach(t => { if (!t.done) t[ds.f] = +ds.v; }); save(); render(); toast('已填入还没做的组');
@@ -366,7 +445,7 @@ const actions = {
   finishAsk() {
     const s = activeSession(), c = calc(s);
     const mins = s.durationMin || Math.max(1, Math.round(((s.lastSetAt || Date.now()) - s.startedAt) / 60000));
-    ui.f = { date: s.date, dur: mins, feel: s.feel, trap: s.trap, note: s.note || '' };
+    ui.f = { date: s.date, day: s.day, dur: mins, feel: s.feel, trap: s.trap, note: s.note || '', saveStd: null };
     drawFinish();
   },
   fChip(ds) { ui.f[ds.k] = ui.f[ds.k] === ds.v ? null : ds.v; drawFinish(); },
@@ -374,6 +453,8 @@ const actions = {
     const s = activeSession(), f = ui.f, c0 = calc(s);
     if (!c0.sets) { toast('还没有完成任何一组'); return; }
     if (!f.date) { toast('请选择日期'); return; }
+    if (f.saveStd === 'yes') stdDiffs(s).forEach(d => { d.it.lb = d.lb; });
+    if (f.day) s.day = f.day;
     s.date = f.date; s.durationMin = Math.max(1, Math.round(num(f.dur)) || 1); s.feel = f.feel; s.trap = f.trap; s.note = f.note;
     s.exercises = s.exercises.filter(e => e.sets.some(t => t.done));
     const wasEdit = s.done, prs = wasEdit ? [] : findPRs(s), prev = finished().find(x => x.day === s.day && x.id !== s.id);
@@ -393,10 +474,10 @@ const actions = {
   nav(ds) { ui.tab = ds.v; render(); scrollTo(0, 0); },
 
   /* 补记 */
-  backfill() {
-    const d = ui.pick || nextDay();
+  backfill(ds) {
+    const d = ui.pick || nextDay(), dt = (ds && ds.date) || ymd(addDays(new Date(), -1));
     showSheet(`<div class="${d}"><div class="sheet-title">补记一次训练</div>
-      <div class="form"><div class="formrow"><span>日期</span><input type="date" id="bfDate" max="${ymd()}" value="${ymd(addDays(new Date(), -1))}"></div>
+      <div class="form"><div class="formrow"><span>日期</span><input type="date" id="bfDate" max="${ymd()}" value="${dt}"></div>
       <div class="formrow"><span>练的是</span><select id="bfDay">${Object.keys(DAYS).map(k => `<option value="${k}" ${k === d ? 'selected' : ''}>${DAYS[k].label} ${DAYS[k].title}</option>`).join('')}</select></div></div>
       <button class="btn" data-a="backfillGo">开始填写</button></div>`);
   },
@@ -439,6 +520,7 @@ const actions = {
     const nm = getEx(S.plan[ui.planDay][+ds.i].ex).name;
     confirmSheet(`从计划里移除“${nm}”？以前的记录不受影响。`, '移除', () => { S.plan[ui.planDay].splice(+ds.i, 1); save(); render(); });
   },
+  planSwap(ds) { const it = S.plan[ui.planDay][+ds.i]; it.ex = getEx(it.ex).alt; delete it.lb; save(); render(); drawPlanItem(ui.planDay, +ds.i); },
   planReset() { confirmSheet('把三天的计划恢复成原始版本？训练记录不受影响。', '恢复', () => { S.plan = clone(PLAN); save(); render(); }); },
   addExercise(ds) { ui.add = { to: ds.to, pickId: '', name: '', type: 'weight', perSide: '0', goal: 'arm', sets: 3, low: 10, high: 12 }; drawAdd(); },
   addSave() {
@@ -449,6 +531,7 @@ const actions = {
       S.customEx[id] = { name: a.name.trim(), type: a.type, perSide: a.perSide === '1', goal: a.goal, met: a.type === 'weight' ? 4 : 3.8, step: 5 };
     }
     const low = Math.max(1, Math.round(num(a.low))), it = { ex: id, sets: Math.max(1, Math.round(num(a.sets))), low, high: Math.max(low, Math.round(num(a.high))) };
+    if (a.pickId && a.lb !== undefined) it.lb = a.lb;
     if (a.to === 'session') { const s = activeSession(); s.exercises.push(buildExercise(it, s.id)); ui.open = s.exercises.length - 1; }
     else S.plan[ui.planDay].push(it);
     save(); closeSheet(); render();
@@ -499,7 +582,7 @@ function drawRest() {
   const left = (r.end - Date.now()) / 1000;
   el.className = 'show' + (r.over ? ' over' : '');
   el.innerHTML = `<div><b id="restT">${r.over ? '开始' : mmss(left)}</b><span>${r.over ? '下一组' : '组间休息'}</span>
-    ${r.over ? '' : '<button data-a="restAdd" data-v="-15">−15</button><button data-a="restAdd" data-v="15">+15</button>'}<button data-a="restSkip">${r.over ? '好' : '跳过'}</button></div>`;
+    ${r.over ? '' : `${S.settings.sysTimer ? '<button data-a="restSystem">系统</button>' : ''}<button data-a="restAdd" data-v="-15">−15</button><button data-a="restAdd" data-v="15">+15</button>`}<button data-a="restSkip">${r.over ? '好' : '跳过'}</button></div>`;
 }
 function drawTimer() {
   const el = $('#timer'), t = ui.timer;
@@ -518,7 +601,7 @@ setInterval(() => {
   }
   const r = ui.rest;
   if (r && ui.view === 'workout') {
-    if (!r.over && Date.now() >= r.end) { r.over = true; beep(3); drawRest(); setTimeout(() => { if (ui.rest === r) { ui.rest = null; drawRest(); } }, 8000); }
+    if (!r.over && Date.now() >= r.end) { r.over = true; beep(3); drawRest(); setTimeout(() => { if (ui.rest === r) { ui.rest = null; drawRest(); } }, 15000); }
     else if (!r.over) { const c = $('#restT'); if (c) c.textContent = mmss((r.end - Date.now()) / 1000); }
   }
   if (ui.view === 'workout') {
@@ -531,15 +614,47 @@ setInterval(() => {
 /* ---------- 弹层 ---------- */
 function showSheet(html) {
   const el = $('#sheet'); el.className = 'show';
-  el.innerHTML = `<div class="mask" data-a="maskClose"></div><div class="panel" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div>`;
+  el.innerHTML = `<div class="mask" data-a="maskClose"></div><div class="panel" role="dialog" aria-modal="true">${ui.lockSheet ? '' : '<div class="sheet-bar"><button class="sheet-x" data-a="closeSheet" aria-label="关闭"><span>×</span></button></div>'}<div class="grab"></div>${html}</div>`;
 }
 function closeSheet() { const el = $('#sheet'); el.className = ''; el.innerHTML = ''; }
+/* 从中间往下拉关闭弹层 */
+(() => {
+  let d = null;
+  document.addEventListener('touchstart', e => {
+    const p = e.target.closest && e.target.closest('#sheet .panel');
+    if (!p || ui.lockSheet || p.scrollTop > 0 || e.target.closest('input,textarea,select')) { d = null; return; }
+    d = { p, y: e.touches[0].clientY, t: Date.now(), on: false, dy: 0 };
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (e.target.closest && e.target.closest('#sheet .mask')) { e.preventDefault(); return; }
+    if (!d) return;
+    const dy = e.touches[0].clientY - d.y;
+    if (!d.on) { if (dy < -4) { d = null; return; } if (dy < 6) return; d.on = true; d.p.classList.remove('back'); }
+    e.preventDefault(); d.dy = dy; d.p.style.transform = `translateY(${Math.max(0, dy)}px)`;
+  }, { passive: false });
+  const end = () => {
+    if (!d || !d.on) { d = null; return; }
+    const { p, dy, t } = d; d = null;
+    if (dy > 90 || (dy > 30 && dy / (Date.now() - t) > .5)) { p.classList.add('closing'); setTimeout(closeSheet, 170); }
+    else { p.classList.add('back'); p.style.transform = ''; }
+  };
+  document.addEventListener('touchend', end); document.addEventListener('touchcancel', end);
+})();
 let confirmFn = null;
 actions.confirmOk = () => { const f = confirmFn; confirmFn = null; closeSheet(); f && f(); };
 function confirmSheet(msg, ok, fn) {
   confirmFn = fn;
   showSheet(`<div style="font-size:17px;font-weight:600;margin:4px 2px 16px">${esc(msg)}</div>
     <button class="btn" style="--c:#b23b3b;margin-bottom:8px" data-a="confirmOk">${esc(ok)}</button><button class="btn soft" data-a="closeSheet">取消</button>`);
+}
+function stdDiffs(s) {
+  const out = [];
+  (S.plan[s.day] || []).forEach(it => {
+    if (it.lb === undefined || it.lb === '') return;
+    const e = s.exercises.find(x => x.ex === it.ex), ex = getEx(it.ex); if (!e || ex.type === 'body' || ex.type === 'time') return;
+    const lb = bestValue(ex, e); if (lb != null && lb !== it.lb) out.push({ it, lb, name: ex.name });
+  });
+  return out;
 }
 const chip = (k, v, label) => `<button class="${ui.f[k] === v ? 'on' : ''}" data-a="fChip" data-k="${k}" data-v="${v}">${label}</button>`;
 function drawFinish() {
@@ -553,11 +668,13 @@ function drawFinish() {
     </div>
     <div class="form">
       <div class="formrow"><span>日期</span><input type="date" value="${f.date}" max="${ymd()}" data-in="f" data-f="date"></div>
+      <div class="formrow"><span>这是哪一练</span><select data-in="f" data-f="day" aria-label="这是哪一练">${Object.keys(DAYS).map(k => `<option value="${k}" ${f.day === k ? 'selected' : ''}>${DAYS[k].label}</option>`).join('')}</select></div>
       <div class="formrow"><span>训练时长（分钟）</span><input inputmode="numeric" pattern="[0-9]*" value="${esc(f.dur)}" data-in="f" data-f="dur" aria-label="训练时长"></div>
     </div>
     <div class="label">整体感受</div>
     <div class="chips">${chip('feel', 'easy', '轻松')}${chip('feel', 'good', '刚好')}${chip('feel', 'hard', '很累')}</div>
     ${hasTrap ? `<div class="label">练背时斜方肌有没有抢着发力？</div><div class="chips">${chip('trap', 'no', '没有')}${chip('trap', 'yes', '有一点')}</div>` : ''}
+    ${!s.done && stdDiffs(s).length ? `<div class="label">这次重量和默认不一样，存成以后的默认吗？</div><p class="tiny" style="margin:-3px 2px 7px">${stdDiffs(s).map(d => `${esc(d.name)} ${d.it.lb} → ${d.lb} lb`).join('，')}</p><div class="chips">${chip('saveStd', 'yes', '存为新默认')}</div>` : ''}
     <textarea placeholder="备注（可选）：比如哪个动作不舒服" data-in="f" data-f="note">${esc(f.note)}</textarea>
     <button class="btn" data-a="finishSave" style="margin-bottom:8px">保存</button>
     ${s.done ? `<button class="btn soft" data-a="closeSheet">继续修改</button>` : `<button class="btn soft" data-a="closeSheet" style="margin-bottom:8px">继续练</button><button class="btn danger" data-a="discardAsk">放弃这次训练</button>`}
@@ -611,6 +728,7 @@ function drawPlanItem(day, i) {
     ${img(it.ex) ? `<img src="${img(it.ex)}" alt="" style="width:100%;max-width:260px;display:block;margin:0 auto 12px;border-radius:14px">` : ''}
     ${ex.setup ? `<div class="card">${howto(ex)}${ex.trap ? `<div class="trap"><b>防斜方肌</b><span>${esc(ex.trap)}</span></div>` : ''}</div>` : ''}
     <div class="form">
+      ${ex.type === 'weight' || ex.type === 'assist' ? `<div class="formrow"><span>默认${ex.type === 'assist' ? '辅助' : ''}重量（lb）</span><input inputmode="decimal" value="${it.lb ?? ''}" placeholder="沿用上次" data-in="plan" data-i="${i}" data-f="lb" aria-label="默认重量"></div>` : ''}
       <div class="formrow"><span>组数</span><input inputmode="numeric" value="${it.sets}" data-in="plan" data-i="${i}" data-f="sets" aria-label="组数"></div>
       <div class="formrow"><span>最少 ${unit}${ex.perSide ? '/边' : ''}</span><input inputmode="numeric" value="${it.low}" data-in="plan" data-i="${i}" data-f="low" aria-label="最少"></div>
       <div class="formrow"><span>最多 ${unit}${ex.perSide ? '/边' : ''}</span><input inputmode="numeric" value="${it.high}" data-in="plan" data-i="${i}" data-f="high" aria-label="最多"></div>
@@ -619,6 +737,7 @@ function drawPlanItem(day, i) {
       <button class="btn soft" data-a="planMove" data-i="${i}" data-v="-1" ${i === 0 ? 'disabled style="opacity:.4"' : ''}>上移</button>
       <button class="btn soft" data-a="planMove" data-i="${i}" data-v="1" ${i === S.plan[day].length - 1 ? 'disabled style="opacity:.4"' : ''}>下移</button>
     </div>
+    ${ex.alt ? `<button class="btn soft" data-a="planSwap" data-i="${i}" style="margin-bottom:8px">默认改成${esc(getEx(ex.alt).name)}</button>` : ''}
     <button class="btn" data-a="closeSheet" style="margin-bottom:8px">完成</button>
     <button class="btn danger" data-a="planRemove" data-i="${i}">从计划移除</button></div>`);
 }
@@ -644,6 +763,9 @@ function drawSettings() {
       <div class="formrow"><span>体重（lb，用来算热量）</span><input inputmode="decimal" value="${s.weightLb}" data-in="setting" data-f="weightLb" aria-label="体重"></div>
       <div class="formrow"><span>组间休息（秒）</span><input inputmode="numeric" value="${s.restSec}" data-in="setting" data-f="restSec" aria-label="组间休息"></div>
       <div class="formrow"><span>提示音</span><button class="link" data-a="toggleSound">${s.sound ? '开' : '关'}</button></div>
+      <div class="formrow"><span class="grow">提示音方式<br><span class="tiny">${s.soundMode === 'mix' ? '不打断音乐，但手机静音时不响' : '手机静音也响，但可能暂停音乐'}</span></span><button class="link" data-a="soundMode">${s.soundMode === 'mix' ? '混音' : '响亮'}</button></div>
+      <div class="formrow"><span>试听提示音</span><button class="link" data-a="testSound">播放</button></div>
+      <div class="formrow"><span>系统计时器（灵动岛）</span><button class="link" data-a="sysTimerHelp">${s.sysTimer ? '已打开' : '设置'}</button></div>
     </div>
     <div class="label">数据备份</div>
     <p class="small muted" style="margin:0 2px 10px">记录只存在这台手机上。换手机或清除 Safari 数据前一定要先备份。${s.lastBackup ? `上次备份：${short(ymd(new Date(s.lastBackup)))}` : '还没有备份过。'}</p>
@@ -697,7 +819,7 @@ function viewHistory() {
   let cells = ['一', '二', '三', '四', '五', '六', '日'].map(w => `<div class="w">${w}</div>`).join('') + '<span class="blank"></span>'.repeat(lead);
   for (let d = 1; d <= nDays; d++) {
     const ds = `${y}-${pad(m + 1)}-${pad(d)}`, s = inMonth.find(x => x.date === ds);
-    cells += s ? `<button class="has ${s.day}" data-a="openSession" data-id="${s.id}" aria-label="${fmtDate(ds)} ${DAYS[s.day].label}">${d}</button>` : `<button class="${ds === ymd() ? 'today' : ''}" tabindex="-1">${d}</button>`;
+    cells += s ? `<button class="has ${s.day}" data-a="openSession" data-id="${s.id}" aria-label="${fmtDate(ds)} ${DAYS[s.day].label}">${d}</button>` : (ds <= ymd() ? `<button class="${ds === ymd() ? 'today' : ''}" data-a="backfill" data-date="${ds}" aria-label="补记 ${fmtDate(ds)}">${d}</button>` : `<button disabled>${d}</button>`);
   }
   const isNow = y === now.getFullYear() && m === now.getMonth();
   return `<div class="h-title" style="margin-bottom:14px">历史</div>
@@ -706,7 +828,9 @@ function viewHistory() {
     <div class="cal">${cells}</div>
     <div class="legend">${Object.keys(DAYS).map(k => `<span class="${k}"><i></i>${DAYS[k].label} ${DAYS[k].title}</span>`).join('')}</div>
   </section>
-  ${inMonth.length ? inMonth.map(s => { const c = calc(s); return `<button class="sess ${s.day}" data-a="openSession" data-id="${s.id}"><span class="dot">${s.day[1]}</span><span class="grow"><span class="ttl">${DAYS[s.day].title}</span><br><span class="small muted">${fmtDate(s.date)} · ${s.durationMin || Math.round(sessionSec(s) / 60)} 分钟</span></span><span class="small muted">${kcalText(c.kcal)} kcal</span></button>`; }).join('') : `<div class="empty">这个月还没有记录</div>`}`;
+  ${inMonth.length ? inMonth.map(s => { const c = calc(s); return `<button class="sess ${s.day}" data-a="openSession" data-id="${s.id}"><span class="dot">${s.day[1]}</span><span class="grow"><span class="ttl">${DAYS[s.day].title}</span><br><span class="small muted">${fmtDate(s.date)} · ${s.durationMin || Math.round(sessionSec(s) / 60)} 分钟</span></span><span class="small muted">${kcalText(c.kcal)} kcal</span></button>`; }).join('') : `<div class="empty">这个月还没有记录</div>`}
+  <button class="btn soft" data-a="backfill">补记一次过去的训练</button>
+  <p class="tiny" style="text-align:center;margin-top:8px">点日历上的空白日期可以补记，点彩色日期可以修改或删除</p>`;
 }
 
 /* ---------- 图表 ---------- */
@@ -851,7 +975,7 @@ function viewPlan() {
   <div class="seg" style="margin-bottom:14px">${Object.keys(DAYS).map(k => `<button class="${k === day ? 'on' : ''}" data-a="planDay" data-v="${k}">${DAYS[k].label}</button>`).join('')}</div>
   <h2 style="color:var(--c);font-size:26px;font-weight:750;margin:0 2px">${D.title}</h2>
   <p class="small muted" style="margin:0 2px 12px">${S.plan[day].reduce((a, i) => a + i.sets, 0)} 组 · 约 ${est.min} 分钟 · 组间休息 ${S.settings.restSec} 秒</p>
-  <section class="card">${S.plan[day].map((it, i) => { const ex = getEx(it.ex); return `<button class="planitem" data-a="planItem" data-i="${i}">${thumb(it.ex)}<span class="grow"><span class="nm">${esc(ex.name)}</span><br><span class="t">${fmtTarget(it, ex)}</span></span></button>`; }).join('') || '<div class="empty">这一天还没有动作</div>'}</section>
+  <section class="card">${S.plan[day].map((it, i) => { const ex = getEx(it.ex); return `<div class="planitem"><button class="pmain" data-a="planItem" data-i="${i}">${thumb(it.ex)}<span class="grow"><span class="nm">${esc(ex.name)}</span><br><span class="t">${fmtTarget(it, ex)}${it.lb !== undefined && it.lb !== '' ? ` · ${it.lb} lb` : ''}</span>${ex.note ? `<span class="pnote">${esc(ex.note)}</span>` : ''}</span></button><button class="px" data-a="planRemove" data-i="${i}" aria-label="移除${esc(ex.name)}">×</button></div>`; }).join('') || '<div class="empty">这一天还没有动作</div>'}</section>
   <button class="btn soft" data-a="addExercise" data-to="plan" style="margin-bottom:6px">加一个动作</button>
   <div style="text-align:center"><button class="link small" style="--c:var(--ink2)" data-a="planReset">恢复原始计划</button></div></div>`;
 }
@@ -884,7 +1008,9 @@ document.addEventListener('input', ev => {
     ui.f[d.f] = v;
     if (d.f === 'dur') { const c = calc(activeSession(), num(v) * 60), kk = $('#fKcal'); if (kk) kk.textContent = kcalText(c.kcal); }
   } else if (k === 'plan') {
-    const it = S.plan[ui.planDay][d.i], n = Math.round(num(v)); if (n > 0) { it[d.f] = n; if (d.f === 'low' && it.high < n) it.high = n; if (d.f === 'high' && it.low > n) it.low = n; save(); render(); }
+    const it = S.plan[ui.planDay][d.i], n = Math.round(num(v));
+    if (d.f === 'lb') { if (v.trim() === '') delete it.lb; else it.lb = num(v); save(); render(); }
+    else if (n > 0) { it[d.f] = n; if (d.f === 'low' && it.high < n) it.high = n; if (d.f === 'high' && it.low > n) it.low = n; save(); render(); }
   } else if (k === 'add') { ui.add[d.f] = v; }
   else if (k === 'setting') {
     const n = num(v);
@@ -897,7 +1023,7 @@ document.addEventListener('change', ev => {
   const el = ev.target, k = el.dataset.change; if (!k) return;
   if (k === 'exPick') { ui.exPick = el.value; render(); }
   else if (k === 'metricPick') { ui.metric = el.value; render(); }
-  else if (k === 'addPick') { ui.add.pickId = el.value; if (el.value) { const ex = getEx(el.value); if (ex.type === 'time') { ui.add.low = 30; ui.add.high = 45; } } drawAdd(); }
+  else if (k === 'addPick') { ui.add.pickId = el.value; if (el.value) { const ex = getEx(el.value), std = Object.values(S.plan).flat().find(i => i.ex === el.value); if (std) { Object.assign(ui.add, { sets: std.sets, low: std.low, high: std.high }); ui.add.lb = std.lb; } else { ui.add.lb = undefined; if (ex.type === 'time') { ui.add.low = 30; ui.add.high = 45; } } } drawAdd(); }
   else if (k === 'addField') {
     ui.add[el.dataset.f] = el.value;
     if (el.dataset.f === 'type' && el.value === 'time') { ui.add.low = 30; ui.add.high = 45; }
@@ -913,5 +1039,7 @@ render();
 if (!S.settings.onboarded) onboard();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.search.includes('sw'))) {
+  const had = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had) location.reload(); });
   addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
