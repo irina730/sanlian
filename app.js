@@ -1,6 +1,7 @@
 'use strict';
 /* 三练：所有数据只存在这台手机的浏览器里（localStorage），不上传任何地方 */
 const KEY = 'sanlian.v1';
+const PUSH = { url: '', key: 'BBTFOJ0Oy_ncZK94nfP9W_Gvg5FgIi8kPMj2wUrhdKwdEgSMgEVgVtNGgYvfXcFQpjIn1S6K7KMAbtz_s_YmA3s' }; // 后台横幅提醒的服务地址和公钥
 const TEMPO = 3.5;          // 每个动作次数约 3.5 秒
 const REST_MET = 2.5;       // 组间休息的代谢当量
 const MAX_REST_PER_SET = 180; // 每组最多计 3 分钟休息，防止忘关 App 虚高
@@ -19,7 +20,7 @@ const ICON = {
 /* ---------- 状态 ---------- */
 const clone = o => JSON.parse(JSON.stringify(o));
 function defaults() {
-  return { v: 2, settings: { weightLb: 130, restSec: 75, sound: true, soundMode: 'loud', sysTimer: false, onboarded: false, lastBackup: null, hideInstall: false },
+  return { v: 3, settings: { weightLb: 130, restSec: 75, sound: true, soundMode: 'loud', sysTimer: false, onboarded: false, lastBackup: null, hideInstall: false },
     plan: clone(PLAN), customEx: {}, sessions: [], active: null, body: [] };
 }
 function load() {
@@ -29,7 +30,9 @@ function load() {
     const d = defaults(), o = JSON.parse(raw);
     const out = { ...d, ...o, settings: { ...d.settings, ...o.settings } };
     if ((o.v || 1) < 2) out.plan = { ...out.plan, d1: clone(PLAN.d1) }; // 第 2 版：Day 1 换成新的标准训练
-    out.v = 2;
+    // 第 3 版：Day 1 只留背和手臂，其他手动改过的内容不动
+    if (o.v === 2) out.plan = { ...out.plan, d1: out.plan.d1.filter(i => i.ex !== 'hip-abduction' && i.ex !== 'hip-adduction') };
+    out.v = 3;
     return out;
   } catch (e) { return defaults(); }
 }
@@ -38,7 +41,7 @@ function save() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); }
   catch (e) { toast('保存失败，请先备份数据'); }
 }
-const ui = { tab: 'today', view: 'tabs', pick: null, open: 0, how: {}, cal: null, range: 12, exPick: 'lat-pulldown', metric: 'weightLb', planDay: 'd1', rest: null, timer: null, f: null, snap: null };
+const ui = { tab: 'today', view: 'tabs', pick: null, open: 0, how: {}, cal: null, range: 7, exPick: 'lat-pulldown', metric: 'weightLb', planDay: 'd1', rest: null, timer: null, f: null, snap: null };
 
 /* ---------- 工具 ---------- */
 const $ = s => document.querySelector(s);
@@ -236,6 +239,20 @@ function releaseAwake() { try { wake && wake.release(); } catch (e) {} wake = nu
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ui.view === 'workout') keepAwake(); });
 
 /* ---------- 今日 ---------- */
+const LIFTER = `<svg class="lifter" viewBox="0 0 64 64" role="img" aria-label="举重的小人" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke="#3a3636" stroke-width="3.4">
+    <circle cx="32" cy="19" r="5" fill="#3a3636" stroke="none"><animate attributeName="cy" values="21;18;18;21" keyTimes="0;.4;.65;1" dur="1.8s" repeatCount="indefinite"/></circle>
+    <line x1="32" x2="32" y1="27" y2="44"><animate attributeName="y1" values="29;26;26;29" keyTimes="0;.4;.65;1" dur="1.8s" repeatCount="indefinite"/><animate attributeName="y2" values="46;43;43;46" keyTimes="0;.4;.65;1" dur="1.8s" repeatCount="indefinite"/></line>
+    <polyline points="32,46 20,50 22,61"><animate attributeName="points" values="32,46 20,50 22,61;32,43 26,52 25,61;32,43 26,52 25,61;32,46 20,50 22,61" keyTimes="0;.4;.65;1" dur="1.8s" repeatCount="indefinite"/></polyline>
+    <polyline points="32,46 43,50 40,61"><animate attributeName="points" values="32,46 44,50 42,61;32,43 38,52 39,61;32,43 38,52 39,61;32,46 44,50 42,61" keyTimes="0;.4;.65;1" dur="1.8s" repeatCount="indefinite"/></polyline>
+    <polyline points="32,30 17,36 21,31"><animate attributeName="points" values="32,30 17,37 21,31;32,27 22,18 21,7;32,27 22,18 21,7;32,30 17,37 21,31" keyTimes="0;.4;.65;1" dur="1.8s" repeatCount="indefinite"/></polyline>
+    <polyline points="32,30 47,36 43,31"><animate attributeName="points" values="32,30 47,37 43,31;32,27 42,18 43,7;32,27 42,18 43,7;32,30 47,37 43,31" keyTimes="0;.4;.65;1" dur="1.8s" repeatCount="indefinite"/></polyline>
+  </g>
+  <g><animateTransform attributeName="transform" type="translate" values="0 0;0 -24;0 -24;0 0" keyTimes="0;.4;.65;1" dur="1.8s" repeatCount="indefinite"/>
+    <line x1="6" x2="58" y1="31" y2="31" stroke="#9ba6b2" stroke-width="3"/>
+    <rect x="5" y="23" width="5" height="16" rx="2" fill="#b04f69"/><rect x="54" y="23" width="5" height="16" rx="2" fill="#b04f69"/>
+  </g>
+</svg>`;
 function weekStrip() {
   const start = monday(new Date()), todayS = ymd(); let cells = '';
   for (let i = 0; i < 7; i++) {
@@ -258,8 +275,9 @@ function viewToday() {
   const lastTrap = all.find(s => s.trap);
   const planHasTrap = S.plan[day].some(i => getEx(i.ex).trap);
   return `
-  <div class="row between" style="margin-bottom:12px">
-    <div><div class="h-title">${d.getMonth() + 1}月${d.getDate()}日 ${WD[d.getDay()]}</div></div>
+  <div class="row between" style="margin-bottom:12px;align-items:flex-start">
+    <div><div class="h-title">${d.getMonth() + 1}月${d.getDate()}日 ${WD[d.getDay()]}</div>
+      <div class="cheer"><span>Irina 你给我好好练！</span>${LIFTER}</div></div>
     <button class="iconbtn" data-a="settings" aria-label="设置">${ICON.gear}</button>
   </div>
   ${ios && !standalone && !S.settings.hideInstall ? `<div class="banner row"><div class="grow">用 Safari 点底部分享按钮，选“添加到主屏幕”，就能像 App 一样打开。</div><button class="link small" data-a="hideInstall">知道了</button></div>` : ''}
@@ -404,6 +422,10 @@ const actions = {
   },
   toggleSysTimer() { S.settings.sysTimer = !S.settings.sysTimer; save(); actions.sysTimerHelp(); },
   soundMode() { S.settings.soundMode = S.settings.soundMode === 'mix' ? 'loud' : 'mix'; applyAudioSession(); bellReady = false; save(); drawSettings(); },
+  pushToggle() {
+    if (S.settings.pushOn) { S.settings.pushOn = false; save(); drawSettings(); return; }
+    pushEnable();
+  },
   testSound() { unlockAudio(); setTimeout(() => beep(3), 300); },
   applySuggest(ds) {
     const e = activeSession().exercises[ds.i];
@@ -432,9 +454,10 @@ const actions = {
     ui.timer = null; drawTimer();
     if (p.work && el >= 1) { const s = activeSession(); s.exercises[t.i].sets[t.j].sec = el; completeSet(s, t.i, t.j); }
   },
-  restAdd(ds) { if (ui.rest) { ui.rest.end += +ds.v * 1000; ui.rest.over = false; drawRest(); } },
-  restSkip() { ui.rest = null; drawRest(); },
+  restAdd(ds) { if (ui.rest) { ui.rest.end += +ds.v * 1000; ui.rest.over = false; drawRest(); pushSchedule(); } },
+  restSkip() { if (ui.rest && !ui.rest.over) pushCancel(); ui.rest = null; drawRest(); },
   leaveWorkout() {
+    if (ui.rest && !ui.rest.over) pushCancel();
     const s = activeSession();
     if (s && s.done) {
       if (ui.snap) { Object.assign(s, clone(ui.snap)); ui.snap = null; }
@@ -452,6 +475,7 @@ const actions = {
   finishSave() {
     const s = activeSession(), f = ui.f, c0 = calc(s);
     if (!c0.sets) { toast('还没有完成任何一组'); return; }
+    if (ui.rest && !ui.rest.over) pushCancel();
     if (!f.date) { toast('请选择日期'); return; }
     if (f.saveStd === 'yes') stdDiffs(s).forEach(d => { d.it.lb = d.lb; });
     if (f.day) s.day = f.day;
@@ -465,7 +489,7 @@ const actions = {
   },
   discardAsk() {
     confirmSheet('放弃这次训练？已经填的内容不会保存。', '放弃', () => {
-      S.sessions = S.sessions.filter(s => s.id !== S.active); S.active = null; ui.view = 'tabs'; ui.rest = null;
+      S.sessions = S.sessions.filter(s => s.id !== S.active); S.active = null; ui.view = 'tabs'; if (ui.rest && !ui.rest.over) pushCancel(); ui.rest = null;
       save(); drawRest(); releaseAwake(); render(); scrollTo(0, 0);
     });
   },
@@ -542,17 +566,8 @@ const actions = {
   settings() { drawSettings(); },
   hideInstall() { S.settings.hideInstall = true; save(); render(); },
   toggleSound() { S.settings.sound = !S.settings.sound; save(); drawSettings(); },
-  installHelp() {
-    showSheet(`<div class="sheet-title">装到手机主屏幕</div>
-      <div class="card"><b>iPhone（要用 Safari 打开）</b><p class="small muted">点底部的分享按钮，往下选“添加到主屏幕”，再点“添加”。</p></div>
-      <div class="card"><b>安卓（用 Chrome 打开）</b><p class="small muted">点右上角三个点，选“添加到主屏幕”或“安装应用”。</p></div>
-      <button class="btn soft" data-a="closeSheet">好的</button>`);
-  },
   exportData() { exportData(); },
   importPick() { $('#importFile').click(); },
-  wipeAsk() {
-    confirmSheet('清空所有训练记录、身体数据和计划修改？不能恢复，建议先备份。', '全部清空', () => { S = defaults(); S.settings.onboarded = true; ui.pick = null; save(); render(); toast('已清空'); });
-  },
   onboardGo() {
     const w = num($('#obWeight').value);
     if (w < 60 || w > 400) { toast('请填一个合理的体重（磅）'); return; }
@@ -572,7 +587,7 @@ function completeSet(s, i, j) {
     if (any >= 0) document.getElementById('ex-' + any)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     else toast('全部完成，点右上角“完成”保存');
   } else { save(); render(); }
-  if (!s.done && !s.manual && s.exercises.some(x => x.sets.some(t => !t.done))) { ui.rest = { end: Date.now() + S.settings.restSec * 1000, over: false }; drawRest(); }
+  if (!s.done && !s.manual && s.exercises.some(x => x.sets.some(t => !t.done))) { ui.rest = { end: Date.now() + S.settings.restSec * 1000, over: false }; drawRest(); pushSchedule(); }
 }
 
 /* ---------- 休息条与计时器 ---------- */
@@ -601,6 +616,7 @@ setInterval(() => {
   }
   const r = ui.rest;
   if (r && ui.view === 'workout') {
+    if (!r.over && document.visibilityState === 'visible' && r.end - Date.now() < 2500) pushCancel();
     if (!r.over && Date.now() >= r.end) { r.over = true; beep(3); drawRest(); setTimeout(() => { if (ui.rest === r) { ui.rest = null; drawRest(); } }, 15000); }
     else if (!r.over) { const c = $('#restT'); if (c) c.textContent = mmss((r.end - Date.now()) / 1000); }
   }
@@ -765,6 +781,7 @@ function drawSettings() {
       <div class="formrow"><span>提示音</span><button class="link" data-a="toggleSound">${s.sound ? '开' : '关'}</button></div>
       <div class="formrow"><span class="grow">提示音方式<br><span class="tiny">${s.soundMode === 'mix' ? '不打断音乐，但手机静音时不响' : '手机静音也响，但可能暂停音乐'}</span></span><button class="link" data-a="soundMode">${s.soundMode === 'mix' ? '混音' : '响亮'}</button></div>
       <div class="formrow"><span>试听提示音</span><button class="link" data-a="testSound">播放</button></div>
+      ${PUSH.url ? `<div class="formrow"><span class="grow">后台横幅提醒<br><span class="tiny">切到别的 App 时，休息结束也会弹通知</span></span><button class="link" data-a="pushToggle">${s.pushOn ? '已打开' : '打开'}</button></div>` : ''}
       <div class="formrow"><span>系统计时器（灵动岛）</span><button class="link" data-a="sysTimerHelp">${s.sysTimer ? '已打开' : '设置'}</button></div>
     </div>
     <div class="label">数据备份</div>
@@ -772,9 +789,7 @@ function drawSettings() {
     <div class="row" style="margin-bottom:14px"><button class="btn soft" data-a="exportData">备份</button><button class="btn soft" data-a="importPick">恢复</button></div>
     <input type="file" id="importFile" accept="application/json,.json" data-change="importFile" hidden>
     <details class="card small" style="padding:12px 14px"><summary style="font-weight:600">热量是怎么算的</summary>
-      <p class="muted" style="margin-top:8px">热量 = MET × 体重（kg）× 时间（小时）。每个动作按次数（每次约 ${TEMPO} 秒）或秒数算发力时间，再加上组间休息（MET ${REST_MET}，每组最多计 3 分钟）。这是公式估算，实际可能差 20–30%，适合看趋势，不要拿来精确抵饮食。</p></details>
-    <button class="btn soft" data-a="installHelp" style="margin-bottom:8px">怎么装到主屏幕</button>
-    <button class="btn danger" data-a="wipeAsk">清空所有数据</button>`);
+      <p class="muted" style="margin-top:8px">热量 = MET × 体重（kg）× 时间（小时）。每个动作按次数（每次约 ${TEMPO} 秒）或秒数算发力时间，再加上组间休息（MET ${REST_MET}，每组最多计 3 分钟）。这是公式估算，实际可能差 20–30%，适合看趋势，不要拿来精确抵饮食。</p></details>`);
 }
 function onboard() {
   ui.lockSheet = true;
@@ -878,8 +893,8 @@ function barChart(items) {
     const h = base - coords[i].y, r = Math.min(4, bw / 2, h), xl = coords[i].x - bw / 2;
     return `<path fill="var(--c)" d="M${xl} ${base}V${coords[i].y + r}Q${xl} ${coords[i].y} ${xl + r} ${coords[i].y}H${xl + bw - r}Q${xl + bw} ${coords[i].y} ${xl + bw} ${coords[i].y + r}V${base}Z"/>`;
   }).join('');
-  const li = items.length - 1, lastVal = items[li].y;
-  return `<div class="chart" data-chart="${id}"><div class="tipbox"></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="每周热量柱状图">
+  const li = items.reduce((m, it, i) => it.y >= items[m].y ? i : m, 0), lastVal = items[li].y;
+  return `<div class="chart" data-chart="${id}"><div class="tipbox"></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="每日热量柱状图">
     ${axis(ticks, y, labels)}${bars}
     ${lastVal > 0 ? `<text class="val" x="${Math.min(coords[li].x, W - PR - 10)}" y="${coords[li].y - 6}" text-anchor="middle">${Math.round(lastVal)}</text>` : ''}
     <line class="cross" y1="${PT}" y2="${H - PB}" stroke="#d8cbc6" style="display:none"/>
@@ -906,51 +921,66 @@ document.addEventListener('pointerout', ev => {
 
 /* ---------- 进度 ---------- */
 function viewProgress() {
-  const all = finished(), thisMon = monday(new Date());
+  const all = finished(), today0 = fromYmd(ymd()), R = ui.range;
   const head = `<div class="h-title" style="margin-bottom:14px">进度</div>`;
   const bodySec = bodySection();
-  if (!all.length) return head + `<div class="card empty">练完第一次之后，这里会出现每周热量、各部位组数和重量变化。</div>` + bodySec;
-  const since = addDays(thisMon, -7 * (ui.range - 1));
-  const inRange = all.filter(s => fromYmd(s.date) >= since);
-  const totalKcal = inRange.reduce((a, s) => a + calc(s).kcal, 0);
-  let streak = 0;
-  for (let k = 0, w = thisMon; k < 520; k++, w = addDays(w, -7)) {
-    const n = all.filter(s => inWeek(s, w)).length;
-    if (n >= 3) streak++; else if (k > 0) break;
+  if (!all.length) return head + `<div class="card empty">练完第一次之后，这里会出现每日消耗、各部位组数和重量变化。</div>` + bodySec;
+  const since = addDays(today0, -(R - 1)), end = addDays(today0, 1), prevSince = addDays(since, -R);
+  const between = (a, b) => all.filter(s => { const d = fromYmd(s.date); return d >= a && d < b; });
+  const inRange = between(since, end), prevRange = between(prevSince, since);
+  const totalKcal = inRange.reduce((a, s) => a + calc(s).kcal, 0), totalSets = inRange.reduce((a, s) => a + calc(s).sets, 0);
+  const rangeName = { 1: '今天', 7: '最近 7 天', 30: '最近 30 天' }[R], prevName = { 1: '昨天', 7: '上一周', 30: '上个月' }[R];
+
+  let daily;
+  if (R === 1) {
+    const per = {};
+    inRange.forEach(s => calc(s).perEx.forEach(p => { if (p.sets) per[p.ex] = (per[p.ex] || 0) + p.kcal; }));
+    const rows = Object.entries(per).sort((a, b) => b[1] - a[1]);
+    daily = `<section class="card d1"><b>今日消耗（kcal）</b>${rows.length ? `<div class="stat" style="margin:8px 0 10px;color:var(--c)">${kcalText(totalKcal)}</div>
+      <table class="tbl">${rows.map(([id, k]) => `<tr><td>${esc(getEx(id).name)}</td><td>${kcalText(k)}</td></tr>`).join('')}</table>` : `<div class="empty">今天还没有训练</div>`}</section>`;
+  } else {
+    const days = [];
+    for (let i = R - 1; i >= 0; i--) {
+      const d = addDays(today0, -i), ds = ymd(d), ss = all.filter(s => s.date === ds), k = ss.reduce((a, s) => a + calc(s).kcal, 0);
+      days.push({ label: short(ds), y: Math.round(k), n: ss.length, tip: `${short(ds)}：${k ? kcalText(k) + ' kcal' : '没有训练'}` });
+    }
+    const list = [...days].reverse().filter(d => d.n);
+    daily = `<section class="card d1"><b>每日消耗（kcal）</b><div class="tiny">${rangeName}</div><div style="margin-top:12px">${barChart(days)}</div>
+    ${list.length ? `<details class="small" style="margin-top:6px"><summary class="muted">查看数据</summary><table class="tbl" style="margin-top:6px"><tr><th>日期</th><th>kcal</th></tr>${list.map(d => `<tr><td>${d.label}</td><td>${kcalText(d.y)}</td></tr>`).join('')}</table></details>` : ''}</section>`;
   }
-  const weeks = [];
-  for (let i = ui.range - 1; i >= 0; i--) {
-    const w = addDays(thisMon, -7 * i), ss = all.filter(s => inWeek(s, w)), k = ss.reduce((a, s) => a + calc(s).kcal, 0);
-    weeks.push({ label: `${w.getMonth() + 1}/${w.getDate()}`, y: Math.round(k), n: ss.length, tip: `${w.getMonth() + 1}/${w.getDate()} 这周：${kcalText(k)} kcal，${ss.length} 练` });
-  }
-  const setsBy = st => { const o = {}; all.filter(s => inWeek(s, st)).forEach(s => s.exercises.forEach(e => { const g = getEx(e.ex).goal, n = e.sets.filter(t => t.done).length; o[g] = (o[g] || 0) + n; })); return o; };
-  const cur = setsBy(thisMon), prev = setsBy(addDays(thisMon, -7));
+
+  const setsOf = list => { const o = {}; list.forEach(s => s.exercises.forEach(e => { const g = getEx(e.ex).goal, n = e.sets.filter(t => t.done).length; o[g] = (o[g] || 0) + n; })); return o; };
+  const cur = setsOf(inRange), prev = setsOf(prevRange);
   const goalRows = Object.entries(GOALS).map(([k, g]) => {
     const ex = getEx(g.key), ser = series(g.key).filter(p => fromYmd(p.date) >= since);
     let trend = g.hint;
     if (ser.length >= 2 && ser[0].y !== ser[ser.length - 1].y) trend = `${ex.name}：${ser[0].y} → ${ser[ser.length - 1].y} ${seriesUnit(ex)}`;
     else if (ser.length) trend = `${ex.name}：${ser[ser.length - 1].y} ${seriesUnit(ex)}`;
-    return `<div class="goalrow"><div class="grow"><div class="nm">${g.name}</div><div class="small muted">${esc(trend)}</div></div><div class="sets">${cur[k] || 0} 组<div class="tiny" style="font-weight:400">上周 ${prev[k] || 0}</div></div></div>`;
+    return `<div class="goalrow"><div class="grow"><div class="nm">${g.name}</div><div class="small muted">${esc(trend)}</div></div><div class="sets">${cur[k] || 0} 组<div class="tiny" style="font-weight:400">${prevName} ${prev[k] || 0}</div></div></div>`;
   }).join('');
+
   const usedIds = [...new Set(all.flatMap(s => s.exercises.map(e => e.ex)))];
   if (!usedIds.includes(ui.exPick)) ui.exPick = usedIds[0];
-  const ex = getEx(ui.exPick), ser = series(ui.exPick).filter(p => fromYmd(p.date) >= since);
+  const ex = getEx(ui.exPick), full = series(ui.exPick), ser = full.filter(p => fromYmd(p.date) >= since), unit = seriesUnit(ex);
   const serPts = ser.map(p => ({ t: fromYmd(p.date).getTime(), y: p.y, label: short(p.date) }));
+  const before = full.filter(p => fromYmd(p.date) < since).pop();
+  const exView = ser.length >= 2 ? lineChart(serPts, unit)
+    : ser.length ? `<div class="stat">${ser[0].y} ${unit}</div><div class="tiny">${short(ser[0].date)}${before ? ` · 之前一次 ${before.y} ${unit}（${short(before.date)}）` : ''}</div>`
+    : `<div class="empty">${rangeName}没有这个动作的记录</div>`;
   return head + `
-  <div class="seg d1" style="margin-bottom:14px">${[[4, '4周'], [12, '12周'], [26, '半年']].map(([v, l]) => `<button class="${ui.range === v ? 'on' : ''}" data-a="range" data-v="${v}">${l}</button>`).join('')}</div>
+  <div class="seg d1" style="margin-bottom:14px">${[[1, '当天'], [7, '一周'], [30, '一个月']].map(([v, l]) => `<button class="${R === v ? 'on' : ''}" data-a="range" data-v="${v}">${l}</button>`).join('')}</div>
   <div class="stats" style="margin-bottom:14px">
     <div class="card"><div class="stat">${inRange.length}</div><div class="tiny">次训练</div></div>
-    <div class="card"><div class="stat">${(Math.round(totalKcal / 100) * 100).toLocaleString()}</div><div class="tiny">kcal（估算）</div></div>
-    <div class="card"><div class="stat">${streak}</div><div class="tiny">连续达标周</div></div>
+    <div class="card"><div class="stat">${totalKcal ? kcalText(totalKcal) : 0}</div><div class="tiny">kcal（估算）</div></div>
+    <div class="card"><div class="stat">${totalSets}</div><div class="tiny">完成组数</div></div>
   </div>
-  <section class="card d1"><b>每周消耗（kcal）</b><div style="margin-top:12px">${barChart(weeks)}</div>
-    <details class="small" style="margin-top:6px"><summary class="muted">查看数据</summary><table class="tbl" style="margin-top:6px"><tr><th>这周开始</th><th class="num">练</th><th>kcal</th></tr>${[...weeks].reverse().filter(w => w.n).map(w => `<tr><td>${w.label}</td><td class="num">${w.n}</td><td>${kcalText(w.y)}</td></tr>`).join('')}</table></details></section>
-  <section class="card"><b>四个目标部位</b><div class="tiny" style="margin:2px 0 10px">本周完成组数，和关键动作的变化</div>${goalRows}</section>
+  ${daily}
+  <section class="card"><b>四个目标部位</b><div class="tiny" style="margin:2px 0 10px">${rangeName}完成的组数，和关键动作的变化</div>${goalRows}</section>
   <section class="card d1"><b>动作进步</b><div style="height:10px"></div>
     <select class="pick" data-change="exPick" aria-label="选择动作">${usedIds.map(id => `<option value="${id}" ${id === ui.exPick ? 'selected' : ''}>${esc(getEx(id).name)}</option>`).join('')}</select>
-    ${serPts.length ? lineChart(serPts, seriesUnit(ex)) : `<div class="empty">这段时间没有这个动作的记录</div>`}
+    ${exView}
     <div class="tiny" style="margin-top:6px">${ex.type === 'assist' ? '辅助重量：越低越强' : ex.type === 'time' ? '每次的最长时间' : ex.type === 'body' ? '每次的最多个数' : '每次的最大重量'}</div>
-    ${ser.length ? `<details class="small" style="margin-top:6px"><summary class="muted">查看数据</summary><table class="tbl" style="margin-top:6px">${[...ser].reverse().slice(0, 12).map(p => `<tr><td>${short(p.date)}</td><td>${p.y} ${seriesUnit(ex)}</td></tr>`).join('')}</table></details>` : ''}
+    ${ser.length >= 2 ? `<details class="small" style="margin-top:6px"><summary class="muted">查看数据</summary><table class="tbl" style="margin-top:6px">${[...ser].reverse().slice(0, 12).map(p => `<tr><td>${short(p.date)}</td><td>${p.y} ${unit}</td></tr>`).join('')}</table></details>` : ''}
   </section>` + bodySec;
 }
 function series(id) {
@@ -1031,6 +1061,37 @@ document.addEventListener('change', ev => {
   }
   else if (k === 'importFile') importFile(el);
 });
+
+/* ---------- 禁止缩放：这是 App，不是网页 ---------- */
+['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
+let lastTouchEnd = 0;
+document.addEventListener('touchend', e => {
+  const now = Date.now();
+  if (now - lastTouchEnd < 320 && !e.target.closest('input,textarea,select,button,a,summary,label')) e.preventDefault();
+  lastTouchEnd = now;
+}, { passive: false });
+
+/* ---------- 后台横幅提醒 ---------- */
+let pushCancelled = false;
+const b64bytes = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - s.length % 4) % 4)), c => c.charCodeAt(0));
+const pushReady = () => !!(PUSH.url && S.settings.pushOn && S.settings.pushEndpoint);
+function pushCall(action, extra) {
+  if (!pushReady()) return;
+  fetch(`${PUSH.url}/${action}`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: S.settings.pushEndpoint, ...extra }) }).catch(() => {});
+}
+function pushSchedule() { if (ui.rest) { pushCancelled = false; pushCall('schedule', { delaySec: Math.max(1, Math.round((ui.rest.end - Date.now()) / 1000)) }); } }
+function pushCancel() { if (!pushCancelled) { pushCancelled = true; pushCall('cancel'); } }
+async function pushEnable() {
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  if (/iP(hone|ad|od)/.test(navigator.userAgent) && !standalone) { toast('要从主屏幕的三练图标打开才能开启'); return; }
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) { toast('这台手机的系统版本不支持，iPhone 需要 iOS 16.4 以上'); return; }
+  try {
+    if (await Notification.requestPermission() !== 'granted') { toast('通知被关闭了，请到手机“设置 → 通知 → 三练”打开'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64bytes(PUSH.key) });
+    S.settings.pushEndpoint = sub.endpoint; S.settings.pushOn = true; save(); drawSettings(); toast('已开启，切到别的 App 也会弹横幅');
+  } catch (e) { toast('开启失败，请检查网络后再试'); }
+}
 
 /* ---------- 启动 ---------- */
 if (activeSession() && !activeSession().done) { ui.view = 'workout'; }

@@ -2,8 +2,8 @@
    type: weight=负重  assist=辅助（数字越小越强）  body=自重  time=按时间
    met: 用于热量估算的代谢当量（参考 Compendium of Physical Activities） */
 const DAYS = {
-  d1: { label: 'Day 1', title: '背 + 手臂 + 腿', focus: '背部线条 · 大手臂后侧 · 大腿内外侧' },
-  d2: { label: 'Day 2', title: '臀 + 核心', focus: '臀腿发力 · 下腹线条' },
+  d1: { label: 'Day 1', title: '背 + 手臂', focus: '背部线条 · 大手臂后侧 · 全程沉肩' },
+  d2: { label: 'Day 2', title: '臀腿 + 核心', focus: '臀腿发力 · 下腹线条' },
   d3: { label: 'Day 3', title: '全身', focus: '全身巩固 · 下腹和侧腰' },
 };
 
@@ -79,8 +79,6 @@ const PLAN = {
     { ex: 'straight-arm-pulldown', sets: 3, low: 12, high: 12, lb: 10 },
     { ex: 'triceps-pushdown', sets: 3, low: 12, high: 12, lb: 10 },
     { ex: 'face-pull', sets: 3, low: 15, high: 15, lb: 10 },
-    { ex: 'hip-abduction', sets: 3, low: 15, high: 15, lb: 85 },
-    { ex: 'hip-adduction', sets: 3, low: 15, high: 15, lb: 80 },
   ],
   d2: [
     { ex: 'hip-thrust', sets: 4, low: 10, high: 12 },
